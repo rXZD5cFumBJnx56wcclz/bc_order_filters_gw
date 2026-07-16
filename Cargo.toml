@@ -1,0 +1,15 @@
+[package]
+name = "bc_order_filters_gw"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bc_utils_lg = {path = "../bc_utils_lg"}
+bc_order_filters = {path = "../bc_order_filters"}
+bc_utils = {path = "../bc_utils"}
+
+[dev-dependencies]
+bc_pack_order_filters = {path = "../../../bc_pack_order_filters"}
+
+pretty_assertions = "1"
+criterion = {version = "0.8", features = ["html_reports"]}
