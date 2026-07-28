@@ -3,30 +3,11 @@ use bc_utils::other::procedure_used;
 use bc_utils_lg::structs::settings::{SETTINGS_ORDER_FILTER, SETTINGS_ORDER_FILTERS};
 use bc_utils_lg::structs::signals::Signal;
 use bc_utils_lg::structs::trade::{Order, TradeState, Trigger};
-use bc_utils_lg::types::maps::{FUNCS_EXTRACT_ARGS_TYPE, MAP};
-
-pub fn get_map<'a>(
-    s: &'a SETTINGS_ORDER_FILTERS,
-    fa: &FUNCS_EXTRACT_ARGS_TYPE<SETTINGS_ORDER_FILTER, Box<dyn OrderFilter>>,
-    orders: &[Option<&(Order, bool, Option<Trigger>)>],
-    src: &[f64],
-    signals: &[Signal],
-    state: &TradeState,
-) -> MAP<&'a str, (BF_ORDER_FILTER<'a>, Box<dyn OrderFilter>)> {
-    s.iter()
-        .map(|(k, setting)| {
-            let order_filter = fa[setting.key.as_str()](setting);
-            (
-                k.as_str(),
-                (order_filter.bf(orders, src, signals, state), order_filter),
-            )
-        })
-        .collect()
-}
+use bc_utils_lg::types::maps::{MAP, PACK};
 
 pub fn get_orders<'a>(
     s: &SETTINGS_ORDER_FILTER,
-    orders: &'a MAP<&str, (Order, bool, Option<Trigger>)>,
+    orders: &'a MAP<&'a str, (Order, bool, Option<Trigger>)>,
     orders_filtered: &MAP<&str, Option<&'a (Order, bool, Option<Trigger>)>>,
 ) -> Vec<Option<&'a (Order, bool, Option<Trigger>)>> {
     let mut res = Vec::with_capacity(s.used_orders.len() + s.used_orders_filtered.len());
@@ -39,7 +20,7 @@ pub fn get_orders<'a>(
     res
 }
 
-pub fn get_src<'a>(
+pub fn get_src_series<'a>(
     s: &SETTINGS_ORDER_FILTER,
     buffer: &[Vec<f64>],
     indications: &'a MAP<&'a str, f64>,
@@ -62,39 +43,74 @@ pub fn get_src<'a>(
     res
 }
 
+pub type OrderFilters<'a> = MAP<&'a str, Box<dyn OrderFilter>>;
+
+pub trait OrderFiltersExt<'a> {
+    fn new(
+        s: &'a SETTINGS_ORDER_FILTERS,
+        fa: &PACK<SETTINGS_ORDER_FILTER, Box<dyn OrderFilter>>,
+    ) -> Self;
+}
+
+pub trait OrderFilterUpdateBf {
+    fn update_bf(&mut self);
+}
+
+impl<'a> OrderFiltersExt<'a> for OrderFilters<'a> {
+    fn new(
+        s: &'a SETTINGS_ORDER_FILTERS,
+        fa: &PACK<SETTINGS_ORDER_FILTER, Box<dyn OrderFilter>>,
+    ) -> Self {
+        s.iter()
+            .map(|(k, setting)| {
+                let order_filter = fa[setting.key.as_str()](setting);
+                (k.as_str(), order_filter)
+            })
+            .collect()
+    }
+}
+
+impl<'a> OrderFilterUpdateBf for OrderFilters<'a> {
+    fn update_bf(&mut self) {
+        for f in self.values() {
+            f.init_bf();
+        }
+    }
+}
+
+#[derive(Default)]
 pub struct OrderFilterGateway<'a> {
-    pub order_filters: *const MAP<&'a str, (BF_ORDER_FILTER<'a>, Box<dyn OrderFilter>)>,
-    s: &'a SETTINGS_ORDER_FILTERS,
+    pub order_filters: *const OrderFilters<'a>,
+    s: *const SETTINGS_ORDER_FILTERS,
 }
 
 impl<'a> OrderFilterGateway<'a> {
     pub fn new(
-        order_filters: *const MAP<&'a str, (BF_ORDER_FILTER<'a>, Box<dyn OrderFilter>)>,
+        order_filters: *const MAP<&'a str, Box<dyn OrderFilter>>,
         s: &'a SETTINGS_ORDER_FILTERS,
     ) -> Self {
         Self { order_filters, s }
     }
 }
 
-impl OrderFilterGateway<'_> {
-    pub fn series<'a>(
-        &'a self,
-        orders: &'a MAP<&str, (Order, bool, Option<Trigger>)>,
+impl<'settings, 'order_link> OrderFilterGateway<'settings> {
+    pub fn series(
+        &self,
+        orders: &'order_link MAP<&str, (Order, bool, Option<Trigger>)>,
         buffer: &[Vec<f64>],
-        indications: &'a MAP<&'a str, f64>,
-        res_utils_state: &'a MAP<&'a str, f64>,
-        signals: &'a MAP<&'a str, Signal>,
+        indications: &MAP<&str, f64>,
+        res_utils_state: &MAP<&str, f64>,
+        signals: &MAP<&str, Signal>,
         state: &TradeState,
-    ) -> MAP<&'a str, Option<&'a (Order, bool, Option<Trigger>)>> {
-        self.s
+    ) -> MAP<&'settings str, Option<&'order_link (Order, bool, Option<Trigger>)>> {
+        unsafe { &*self.s }
             .iter()
             .fold(MAP::default(), move |mut init, (k, setting)| {
                 init.insert(k.as_str(), {
-                    let (bf, order_filter) = &unsafe { &*self.order_filters }[k.as_str()];
+                    let order_filter= &unsafe { &*self.order_filters }[k.as_str()];
                     order_filter.filter(
-                        bf,
                         &get_orders(setting, orders, &init),
-                        &get_src(setting, buffer, indications, res_utils_state),
+                        &get_src_series(setting, buffer, indications, res_utils_state),
                         &setting
                             .used_signals
                             .iter()
@@ -112,9 +128,9 @@ impl OrderFilterGateway<'_> {
 mod tests {
     use super::*;
 
-    use std::{default, sync::LazyLock};
+    use std::sync::LazyLock;
 
-    use bc_pack_order_filters::FUNCS_EXTRACT_ARGS as FA;
+    use bc_packs::PACK_ORDER_FILT;
     use pretty_assertions::assert_eq as assert_eq_pr;
 
     static S: LazyLock<SETTINGS_ORDER_FILTERS> = LazyLock::new(|| {
@@ -123,7 +139,7 @@ mod tests {
                 "count_1".to_string(),
                 SETTINGS_ORDER_FILTER {
                     key: "count".to_string(),
-                    kwargs_f64: MAP::from_iter([("max_count".to_string(), 2.)]),
+                    kwargs_usize: MAP::from_iter([("max_count".to_string(), 2)]),
                     used_orders: vec!["order_1".to_string()],
                     ..Default::default()
                 },
@@ -140,8 +156,8 @@ mod tests {
         ])
     });
     static M: LazyLock<
-        fn() -> MAP<&'static str, (BF_ORDER_FILTER<'static>, Box<dyn OrderFilter>)>,
-    > = LazyLock::new(|| || get_map(&S, &FA, &[], &[], &[], &Default::default()));
+        fn() -> MAP<&'static str, Box<dyn OrderFilter>>,
+    > = LazyLock::new(|| || OrderFilters::new(&S, &PACK_ORDER_FILT));
 
     #[test]
     fn series_res_1() {
@@ -150,7 +166,10 @@ mod tests {
                 &MAP::from_iter([(
                     "order_1",
                     (
-                        Order { side: "buy".to_string(), ..Default::default() },
+                        Order {
+                            side: "buy".to_string(),
+                            ..Default::default()
+                        },
                         Default::default(),
                         Default::default()
                     )
@@ -165,7 +184,10 @@ mod tests {
                 (
                     "count_1",
                     Some(&(
-                        Order { side: "buy".to_string(), ..Default::default() },
+                        Order {
+                            side: "buy".to_string(),
+                            ..Default::default()
+                        },
                         Default::default(),
                         Default::default()
                     ))
@@ -173,7 +195,10 @@ mod tests {
                 (
                     "side_1",
                     Some(&(
-                        Order { side: "buy".to_string(), ..Default::default() },
+                        Order {
+                            side: "buy".to_string(),
+                            ..Default::default()
+                        },
                         Default::default(),
                         Default::default()
                     ))

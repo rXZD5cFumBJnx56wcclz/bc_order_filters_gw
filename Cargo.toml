@@ -9,7 +9,7 @@ bc_order_filters = {path = "../bc_order_filters"}
 bc_utils = {path = "../bc_utils"}
 
 [dev-dependencies]
-bc_pack_order_filters = {path = "../../../bc_pack_order_filters"}
+bc_packs = {path = "../bc_packs"}
 
 pretty_assertions = "1"
 criterion = {version = "0.8", features = ["html_reports"]}
