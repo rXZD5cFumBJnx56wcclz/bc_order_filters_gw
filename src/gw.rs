@@ -107,7 +107,7 @@ impl<'settings, 'order_link> OrderFilterGateway<'settings> {
             .iter()
             .fold(MAP::default(), move |mut init, (k, setting)| {
                 init.insert(k.as_str(), {
-                    let order_filter= &unsafe { &*self.order_filters }[k.as_str()];
+                    let order_filter = &unsafe { &*self.order_filters }[k.as_str()];
                     order_filter.filter(
                         &get_orders(setting, orders, &init),
                         &get_src_series(setting, buffer, indications, res_utils_state),
@@ -155,9 +155,8 @@ mod tests {
             ),
         ])
     });
-    static M: LazyLock<
-        fn() -> MAP<&'static str, Box<dyn OrderFilter>>,
-    > = LazyLock::new(|| || OrderFilters::new(&S, &PACK_ORDER_FILT));
+    static M: LazyLock<fn() -> MAP<&'static str, Box<dyn OrderFilter>>> =
+        LazyLock::new(|| || OrderFilters::new(&S, &PACK_ORDER_FILT));
 
     #[test]
     fn series_res_1() {
