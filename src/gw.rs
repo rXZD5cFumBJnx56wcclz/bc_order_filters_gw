@@ -43,71 +43,48 @@ pub fn get_src_series<'a>(
     res
 }
 
-pub type OrderFilters<'a> = MAP<&'a str, Box<dyn OrderFilter>>;
+#[derive(Default)]
+pub struct OrderFilters<'a>(pub MAP<&'a str, Box<dyn OrderFilter>>);
 
-pub trait OrderFiltersExt<'a> {
-    fn new(
-        s: &'a SETTINGS_ORDER_FILTERS,
-        fa: &PACK<SETTINGS_ORDER_FILTER, Box<dyn OrderFilter>>,
-    ) -> Self;
-}
-
-pub trait OrderFilterUpdateBf {
-    fn update_bf(&mut self);
-}
-
-impl<'a> OrderFiltersExt<'a> for OrderFilters<'a> {
-    fn new(
+impl<'a> OrderFilters<'a> {
+    pub fn new(
         s: &'a SETTINGS_ORDER_FILTERS,
         fa: &PACK<SETTINGS_ORDER_FILTER, Box<dyn OrderFilter>>,
     ) -> Self {
-        s.iter()
-            .map(|(k, setting)| {
-                let order_filter = fa[setting.key.as_str()](setting);
-                (k.as_str(), order_filter)
-            })
-            .collect()
+        Self(
+            s.iter()
+                .map(|(k, setting)| {
+                    let order_filter = fa[setting.key.as_str()](setting);
+                    (k.as_str(), order_filter)
+                })
+                .collect(),
+        )
     }
 }
 
-impl<'a> OrderFilterUpdateBf for OrderFilters<'a> {
-    fn update_bf(&mut self) {
-        for f in self.values() {
+impl<'a> OrderFilters<'a> {
+    pub fn init_bf(&mut self) {
+        for f in self.0.values() {
             f.init_bf();
         }
     }
 }
 
-#[derive(Default)]
-pub struct OrderFilterGateway<'a> {
-    pub order_filters: *const OrderFilters<'a>,
-    s: *const SETTINGS_ORDER_FILTERS,
-}
-
-impl<'a> OrderFilterGateway<'a> {
-    pub fn new(
-        order_filters: *const MAP<&'a str, Box<dyn OrderFilter>>,
-        s: &'a SETTINGS_ORDER_FILTERS,
-    ) -> Self {
-        Self { order_filters, s }
-    }
-}
-
-impl<'settings, 'order_link> OrderFilterGateway<'settings> {
+impl<'settings, 'order_link> OrderFilters<'settings> {
     pub fn series(
         &self,
         orders: &'order_link MAP<&str, (Order, bool, Option<Trigger>)>,
         buffer: &[Vec<f64>],
+        s: &'settings SETTINGS_ORDER_FILTERS,
         indications: &MAP<&str, f64>,
         res_utils_state: &MAP<&str, f64>,
         signals: &MAP<&str, Signal>,
         state: &TradeState,
     ) -> MAP<&'settings str, Option<&'order_link (Order, bool, Option<Trigger>)>> {
-        unsafe { &*self.s }
-            .iter()
+        s.iter()
             .fold(MAP::default(), move |mut init, (k, setting)| {
                 init.insert(k.as_str(), {
-                    let order_filter = &unsafe { &*self.order_filters }[k.as_str()];
+                    let order_filter = &self.0[k.as_str()];
                     order_filter.filter(
                         &get_orders(setting, orders, &init),
                         &get_src_series(setting, buffer, indications, res_utils_state),
@@ -155,13 +132,13 @@ mod tests {
             ),
         ])
     });
-    static M: LazyLock<fn() -> MAP<&'static str, Box<dyn OrderFilter>>> =
+    static M: LazyLock<fn() -> OrderFilters<'static>> =
         LazyLock::new(|| || OrderFilters::new(&S, &PACK_ORDER_FILT));
 
     #[test]
     fn series_res_1() {
         assert_eq_pr!(
-            OrderFilterGateway::new(&M(), &S).series(
+            M().series(
                 &MAP::from_iter([(
                     "order_1",
                     (
@@ -174,6 +151,7 @@ mod tests {
                     )
                 ),]),
                 &[],
+                &S,
                 &Default::default(),
                 &Default::default(),
                 &Default::default(),
